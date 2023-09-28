@@ -10,7 +10,7 @@ import torch
 import torchvision
 
 class Evaluator(object):
-    def __init__(self, prediction_out, t, selection_out=None, selection_threshold:float=0.5):
+    def __init__(self, prediction_out, t, selection_out=None, reject_rate=None, selection_threshold:float=0.5):
         """
         Args:
             prediction_out (B, #class):
@@ -22,6 +22,8 @@ class Evaluator(object):
         self.prediction_result = prediction_out.argmax(dim=1) # (B)
         self.t = t.detach() # (B)
         if selection_out is not None:
+            if reject_rate is not None:
+                selection_threshold = torch.quantile(selection_out, reject_rate)
             condition = (selection_out >= selection_threshold)
             self.selection_result = torch.where(condition, torch.ones_like(selection_out), torch.zeros_like(selection_out)).view(-1) # (B)
         else:
@@ -142,6 +144,58 @@ class Evaluator(object):
         rec = float(tp/(tp+fn+1e-12))
 
         return OrderedDict({'accuracy':acc, 'precision':pre, 'recall':rec})
+    
+
+    def _evaluate_binary_classification_with_rejection(self, h:torch.tensor, t_binary:torch.tensor, r_binary:torch.tensor):
+        """
+        evaluate result of binary classification. 
+
+        Args:
+            h (B): binary prediction which indicates 'positive:1' and 'negative:0'
+            t_binary (B): labels which indicates 'true1:' and 'false:0'
+            r_binary (B): labels which indicates 'accept:1' and 'reject:0'
+        Return:
+            OrderedDict: accuracy, precision, recall
+        """
+        assert h.size(0) == t_binary.size(0) > 0
+        assert len(h.size()) == len(t_binary.size()) == 1
+
+        h_rjc = torch.masked_select(h, r_binary.bool())
+        t_rjc = torch.masked_select(t_binary, r_binary.bool())
+
+        eval_dict = self._evaluate_multi_classification(h, t)
+        for metric in ['accuracy', 'precision', 'recall']:
+            eval_dict[f'raw {metric}'] = eval_dict[metric]
+            del eval_dict[metric]
+
+        # conditions (true,false,positive,negative)
+        condition_true  = (h_rjc==t_rjc)
+        condition_false = (h_rjc!=t_rjc)
+        condition_pos = (h_rjc==torch.ones_like(h))
+        condition_neg = (h==torch.zeros_like(h))
+
+        # TP, TN, FP, FN
+        true_pos = torch.where(condition_true and condition_pos, torch.ones_like(h), torch.zeros_like(h))
+        true_neg = torch.where(condition_true and condition_neg, torch.ones_like(h), torch.zeros_like(h))
+        false_pos = torch.where(condition_false and condition_pos, torch.ones_like(h), torch.zeros_like(h))
+        false_neg = torch.where(condition_false and condition_neg, torch.ones_like(h), torch.zeros_like(h))
+
+        assert (true_pos + true_neg + false_pos + false_neg)==torch.ones_like(true_pos)
+
+        tp = float(true_pos.sum())
+        tn = float(true_neg.sum())
+        fp = float(false_pos.sum())
+        fn = float(false_neg.sum())
+
+        t = float(torch.where(h_rjc==t_rjc, torch.ones_like(h_rjc), torch.zeros_like(h_rjc)).sum())
+        f = float(torch.where(h_rjc!=t_rjc, torch.ones_like(h_rjc), torch.zeros_like(h_rjc)).sum())
+
+        # accuracy, precision, recall
+        eval_dict['accuracy'] = float((tp+tn)/(tp+tn+fp+fn+1e-12))
+        eval_dict['precision'] = float(tp/(tp+fp+1e-12))
+        eval_dict['recall'] = float(tp/(tp+fn+1e-12))
+
+        return eval_dict
 
 
     def _evaluate_rejection(self, h:torch.tensor, t:torch.tensor, r_binary:torch.tensor):

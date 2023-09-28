@@ -16,10 +16,21 @@ class SelectiveNet(torch.nn.Module):
         self.features = features
         self.dim_features = dim_features
         self.num_classes = num_classes
-        
+
+        output_size = 1 if num_classes == 2 else num_classes
+
+        class_activation = torch.nn.Sigmoid() if num_classes == 2 else torch.nn.Identity()
+
         # represented as f() in the original paper
         self.classifier = torch.nn.Sequential(
-            torch.nn.Linear(self.dim_features, self.num_classes)
+            torch.nn.Linear(self.dim_features, output_size),
+            class_activation
+        )
+
+        # represented as h() in the original paper
+        self.aux_classifier = torch.nn.Sequential(
+            torch.nn.Linear(self.dim_features, output_size),
+            class_activation
         )
 
         # represented as g() in the original paper
@@ -29,11 +40,6 @@ class SelectiveNet(torch.nn.Module):
             torch.nn.BatchNorm1d(self.dim_features),
             torch.nn.Linear(self.dim_features, 1),
             torch.nn.Sigmoid()
-        )
-
-        # represented as h() in the original paper
-        self.aux_classifier = torch.nn.Sequential(
-            torch.nn.Linear(self.dim_features, self.num_classes)
         )
 
         # initialize weights of heads

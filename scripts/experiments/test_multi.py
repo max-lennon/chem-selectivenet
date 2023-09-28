@@ -9,6 +9,7 @@ import uuid
 import glob
 
 from collections import OrderedDict
+import numpy as np
 
 from external.dada.flag_holder import FlagHolder
 from external.dada.logger import Logger
@@ -21,6 +22,8 @@ from scripts.test import test
 # data
 @click.option('-d', '--dataset', type=str, required=True)
 @click.option('--dataroot', type=str, default='../data', help='path to dataset root')
+@click.option('--ood', is_flag=True, default=False)
+@click.option('--alpha', type=float, default=0.5)
 
 def main(**kwargs):
     test_multi(**kwargs)
@@ -51,7 +54,7 @@ def test_multi(**kwargs):
     run_dir  = '../scripts'
     target_path = os.path.join(FLAGS.target_dir, '**/weight_final*.pth')
     weight_paths = sorted(glob.glob(target_path, recursive=True), key=lambda x: os.path.basename(x))
-    log_path = os.path.join(FLAGS.target_dir, 'test.csv')
+    log_path = os.path.join(FLAGS.target_dir, f"test_{'ood' if FLAGS.ood else 'id'}.csv")
 
     # logging
     logger = Logger(path=log_path, mode='test')
@@ -71,23 +74,26 @@ def test_multi(**kwargs):
         kw_args['dataroot'] = FLAGS.dataroot
         kw_args['coverage'] = coverage
         # default args
-        kw_args['dim_features'] = 512
+        kw_args['dim_features'] = 1024
         kw_args['dropout_prob'] = 0.3
         kw_args['num_workers'] = 8
         kw_args['batch_size'] = 128
-        kw_args['normalize'] = True
-        kw_args['alpha'] = 0.5
+        kw_args['ood'] = FLAGS.ood
+        kw_args['alpha'] = FLAGS.alpha
         
-        # run test
-        out_dict = test(**kw_args)
+        for reject_rate in np.arange(0.0, 1.0, 0.05):
+            # run test
+            kw_args['reject_rate'] = reject_rate
+            out_dict = test(**kw_args)
 
-        metric_dict = OrderedDict()
-        metric_dict['coverage'] = coverage
-        metric_dict['path'] = weight_path
-        metric_dict.update(out_dict)
+            metric_dict = OrderedDict()
+            metric_dict['coverage'] = coverage
+            metric_dict['reject_rate'] = reject_rate
+            metric_dict['path'] = weight_path
+            metric_dict.update(out_dict)
 
-        # log
-        logger.log(metric_dict)
+            # log
+            logger.log(metric_dict)
 
 if __name__ == '__main__':
     main()

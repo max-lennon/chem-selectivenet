@@ -95,7 +95,7 @@ def test(**kwargs):
             loss_dict['loss'] = loss.detach().cpu().item()
 
             # evaluation
-            evaluator = Evaluator(out_class.detach(), t.detach(), out_select.detach())
+            evaluator = Evaluator(out_class.detach(), t.detach(), out_select.detach(), reject_rate=FLAGS.reject_rate)
             loss_dict.update(evaluator())
 
             test_metric_dict.update(loss_dict)
