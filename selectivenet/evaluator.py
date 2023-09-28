@@ -19,7 +19,12 @@ class Evaluator(object):
         """
         assert 0<=selection_threshold<=1.0
 
-        self.prediction_result = prediction_out.argmax(dim=1) # (B)
+        if prediction_out.shape[1] == 1: # (B)
+            self.binary = True
+            self.prediction_result = torch.squeeze(torch.round(prediction_out))
+        else:
+            self.binary = False
+            self.prediction_result = prediction_out.argmax(dim=1) # (B)
         self.t = t.detach() # (B)
         if selection_out is not None:
             if reject_rate is not None:
@@ -40,13 +45,19 @@ class Evaluator(object):
         eval_dict = OrderedDict()
 
         if self.selection_result is None:
+
+            eval_func = self._evaluate_binary_classification if self.binary else self._evaluate_multi_classification
+
             # add evaluation for classification
-            eval_dict_cls = self._evaluate_multi_classification(self.prediction_result, self.t)
+            eval_dict_cls = eval_func(self.prediction_result, self.t)
             eval_dict.update(eval_dict_cls)
 
         else:
+
+            eval_func = self._evaluate_binary_classification_with_rejection if self.binary else self._evaluate_multi_classification_with_rejection
+
             # add evaluation for classification
-            eval_dict_cls = self._evaluate_multi_classification_with_rejection(self.prediction_result, self.t, self.selection_result)
+            eval_dict_cls = eval_func(self.prediction_result, self.t, self.selection_result)
             eval_dict.update(eval_dict_cls)
             # add evaluation for rejection 
             eval_dict_rjc = self._evaluate_rejection(self.prediction_result, self.t, self.selection_result)
