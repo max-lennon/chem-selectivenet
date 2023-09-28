@@ -20,21 +20,22 @@ from external.dada.logger import Logger
 from selectivenet.vgg_variant import vgg16_variant
 from selectivenet.model import SelectiveNet
 from selectivenet.loss import SelectiveLoss
-from selectivenet.data import DatasetBuilder
+from selectivenet.data import DatasetBuilder, ChemDatasetBuilder
 from selectivenet.evaluator import Evaluator
 
 # options
 @click.command()
 # model
-@click.option('--dim_features', type=int, default=512)
+@click.option('--dim_features', type=int, default=1024)
 @click.option('--dropout_prob', type=float, default=0.3)
 @click.option('-w', '--weight', type=str, required=True, help='model weight path')
 # data
 @click.option('-d', '--dataset', type=str, required=True)
-@click.option('--dataroot', type=str, default='/home/gatheluck/Scratch/selectivenet/data', help='path to dataset root')
+@click.option('--dataroot', type=str, default='../data', help='path to dataset root')
 @click.option('-j', '--num_workers', type=int, default=8)
 @click.option('-N', '--batch_size', type=int, default=128)
-@click.option('--normalize', is_flag=True, default=True)
+@click.option('--ood', is_flag=True)
+@click.option('--reject_rate', type=float, default=None)
 # loss
 @click.option('--coverage', type=float, required=True)
 @click.option('--alpha', type=float, default=0.5, help='balancing parameter between selective_loss and ce_loss')
@@ -47,17 +48,20 @@ def test(**kwargs):
     FLAGS.initialize(**kwargs)
     FLAGS.summary()
 
+    torch.cuda.set_device('cuda:1')
+
     # dataset
-    dataset_builder = DatasetBuilder(name=FLAGS.dataset, root_path=FLAGS.dataroot)
-    test_dataset   = dataset_builder(train=False, normalize=FLAGS.normalize)
+    dataset_builder = ChemDatasetBuilder(name=FLAGS.dataset, root_path=FLAGS.dataroot)
+    test_dataset   = dataset_builder(split='test', ood=FLAGS.ood)
     test_loader    = torch.utils.data.DataLoader(test_dataset, batch_size=FLAGS.batch_size, shuffle=False, num_workers=FLAGS.num_workers, pin_memory=True)
 
     # model
-    features = vgg16_variant(dataset_builder.input_size, FLAGS.dropout_prob).cuda()
+    # features = vgg16_variant(dataset_builder.input_size, FLAGS.dropout_prob).cuda()
+    features = lambda x: x
     model = SelectiveNet(features, FLAGS.dim_features, dataset_builder.num_classes).cuda()
     load_model(model, FLAGS.weight)
 
-    if torch.cuda.device_count() > 1: model = torch.nn.DataParallel(model)
+    # if torch.cuda.device_count() > 1: model = torch.nn.DataParallel(model)
 
     # loss
     base_loss = torch.nn.CrossEntropyLoss(reduction='none')

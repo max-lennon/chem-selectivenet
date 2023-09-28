@@ -16,10 +16,10 @@ from external.dada.io import print_metric_dict
 from external.dada.io import save_model
 from external.dada.logger import Logger
 
-from selectivenet.vgg_variant import vgg16_variant
+from selectivenet.vgg_variant import vgg16_variant, VggVariant
 from selectivenet.model import SelectiveNet
 from selectivenet.loss import SelectiveLoss
-from selectivenet.data import DatasetBuilder
+from selectivenet.data import DatasetBuilder, ChemDatasetBuilder
 from selectivenet.evaluator import Evaluator
 
 # options
@@ -53,20 +53,29 @@ def train(**kwargs):
     FLAGS = FlagHolder()
     FLAGS.initialize(**kwargs)
     FLAGS.summary()
+    os.makedirs(FLAGS.log_dir, exist_ok=True)
     FLAGS.dump(path=os.path.join(FLAGS.log_dir, 'flags{}.json'.format(FLAGS.suffix)))
-
+    
+    torch.cuda.set_device('cuda:1')
     # dataset
-    dataset_builder = DatasetBuilder(name=FLAGS.dataset, root_path=FLAGS.dataroot)
-    train_dataset = dataset_builder(train=True, normalize=FLAGS.normalize)
-    val_dataset   = dataset_builder(train=False, normalize=FLAGS.normalize)
+    dataset_builder = ChemDatasetBuilder(name=FLAGS.dataset, root_path=FLAGS.dataroot)
+    train_dataset = dataset_builder(split='train', ood=False)
+    val_dataset   = dataset_builder(split='val', ood=False)
     train_loader  = torch.utils.data.DataLoader(train_dataset, batch_size=FLAGS.batch_size, shuffle=True, num_workers=FLAGS.num_workers, pin_memory=True)
     val_loader    = torch.utils.data.DataLoader(val_dataset, batch_size=FLAGS.batch_size, shuffle=False, num_workers=FLAGS.num_workers, pin_memory=True)
-
+    
     # model
-    features = vgg16_variant(dataset_builder.input_size, FLAGS.dropout_prob).cuda()
+    # features = vgg16_variant(dataset_builder.input_size, FLAGS.dropout_prob).cuda()
+    identity = lambda x: x
+    features = VggVariant(
+        features=identity, 
+        dropout_base_prob=FLAGS.dropout_prob, 
+        input_size=dataset_builder.input_size
+        ).cuda()
+    
     model = SelectiveNet(features, FLAGS.dim_features, dataset_builder.num_classes).cuda()
-    if torch.cuda.device_count() > 1: model = torch.nn.DataParallel(model)
-
+    # if torch.cuda.device_count() > 1: model = torch.nn.DataParallel(model)
+    
     # optimizer
     params = model.parameters() 
     optimizer = torch.optim.SGD(params, lr=FLAGS.lr, momentum=FLAGS.momentum, weight_decay=FLAGS.wd)
