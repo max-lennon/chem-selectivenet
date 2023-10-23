@@ -22,6 +22,8 @@ from external.dada.flag_holder import FlagHolder
 # logging
 @click.option('-l', '--log_dir', type=str, required=True)
 @click.option('--ex_id', type=str, default=uuid.uuid4().hex, help='id of the experiments')
+# hardware
+@click.option('--gpu', type=int, default=0, help="Device ID of the GPU to run on")
 
 def main(**kwargs):
     train_multi(**kwargs)
@@ -33,8 +35,8 @@ def train_multi(**kwargs):
 
     run_dir  = './scripts'
     alphas = [0.5, 1.0]
-    coverages = [1.00, 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.60, 0.50]
-    # coverages = [0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1]
+    coverages = [1.00, 0.95, 0.90, 0.85, 0.80, 0.75] #, 0.70, 0.60, 0.50]
+    # coverages = [0.4, 0.3, 0.2, 0.1]
 
     for coverage in sorted(coverages):
         suffix  = '_coverage_{:0.2f}'.format(coverage)
@@ -48,14 +50,16 @@ def train_multi(**kwargs):
             --coverage {coverage} \
             -s {suffix} \
             -l {log_dir} \
-            --alpha {alpha}'.format(
+            --alpha {alpha} \
+            --gpu {gpu}'.format(
                 dataset=FLAGS.dataset,
                 dataroot=FLAGS.dataroot,
                 num_epochs=FLAGS.num_epochs,
                 coverage=coverage,
                 suffix=suffix,
                 log_dir=log_dir,
-                alpha=FLAGS.alpha)
+                alpha=FLAGS.alpha,
+                gpu=FLAGS.gpu)
 
         subprocess.run(cmd.split(), cwd=run_dir)
 

@@ -48,12 +48,15 @@ class SelectiveNet(torch.nn.Module):
             self._initialize_weights(self.selector)
             self._initialize_weights(self.aux_classifier)
 
-    def forward(self, x):
+    def forward(self, x, test_x=None):
         x = self.features(x)
         x = x.view(x.size(0), -1)
         
         prediction_out = self.classifier(x)
-        selection_out  = self.selector(x)
+        if test_x is None:
+            selection_out  = self.selector(x)
+        else:
+            selection_out  = self.selector(test_x)
         auxiliary_out  = self.aux_classifier(x)
 
         return prediction_out, selection_out, auxiliary_out

@@ -74,10 +74,10 @@ def test_multi(**kwargs):
         kw_args['dataroot'] = FLAGS.dataroot
         kw_args['coverage'] = coverage
         # default args
-        kw_args['dim_features'] = 1024
+        kw_args['dim_features'] = 512
         kw_args['dropout_prob'] = 0.3
         kw_args['num_workers'] = 8
-        kw_args['batch_size'] = 128
+        kw_args['batch_size'] = 1024
         kw_args['ood'] = FLAGS.ood
         kw_args['alpha'] = FLAGS.alpha
         

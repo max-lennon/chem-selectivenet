@@ -1,37 +1,23 @@
 
 import torch
 
-class VggVariant(torch.nn.Module):
+class FeatureNetwork(torch.nn.Module):
     """
-    Variant of VGG used in SelectiveNet (Geifman et al., 2019).
-    In the paper, variant of VGG16 is used as body block.
-    Different points from original VGG are following.
-    - use only one FC layer with 512 neuron.
-    - add batch normalization.
-    - add dropout. (about detail places of dropout, please also refer author's origial TF implementation. https://github.com/geifmany/SelectiveNet)
+    Base class for VGG and MLP networks
     """
-    def __init__(self, features, dropout_base_prob:float, input_size:int, init_weights=True):
+    def __init__(self, features, dropout_base_prob:float):
         """
         Args:
             features: feature extraction layer. 
             dropout_base_prob: base probability of an element to be zeroed by dropout.
-            input_size: size of input. (feature_size = input_size/32)
-            init_weights: initialize weight or not.
         """
 
-        super(VggVariant, self).__init__()
+        super(FeatureNetwork, self).__init__()
         self.features = features
-        self.feature_size = int(input_size/32)
         self.dropout_base_prob = dropout_base_prob
-        
-        self.fc = torch.nn.Sequential(
-            torch.nn.Linear(512*self.feature_size*self.feature_size , 512),
-            torch.nn.ReLU(True),
-            torch.nn.BatchNorm1d(512),
-            torch.nn.Dropout(dropout_base_prob+0.2),
-        )
-        if init_weights:
-            self._initialize_weights()
+
+    def build_fc(self):
+        raise NotImplementedError
 
     def forward(self, x):
         x = self.features(x)
@@ -51,6 +37,73 @@ class VggVariant(torch.nn.Module):
             elif isinstance(m, torch.nn.Linear):
                 torch.nn.init.normal_(m.weight, 0, 0.01)
                 torch.nn.init.constant_(m.bias, 0)
+
+
+class VggVariant(FeatureNetwork):
+    """
+    Variant of VGG used in SelectiveNet (Geifman et al., 2019).
+    In the paper, variant of VGG16 is used as body block.
+    Different points from original VGG are following.
+    - use only one FC layer with 512 neuron.
+    - add batch normalization.
+    - add dropout. (about detail places of dropout, please also refer author's origial TF implementation. https://github.com/geifmany/SelectiveNet)
+    """
+    def __init__(self, features, dropout_base_prob:float, input_size:int, init_weights=True):
+        """
+        Args:
+            features: feature extraction layer. 
+            dropout_base_prob: base probability of an element to be zeroed by dropout.
+            input_size: size of input. (feature_size = input_size/32)
+            init_weights: initialize weight or not.
+        """
+
+        super(VggVariant, self).__init__(features, dropout_base_prob)
+        self.feature_size = int(input_size/32)
+        
+        self.fc = self.build_fc()
+
+        if init_weights:
+            self._initialize_weights()
+
+    def build_fc(self):
+        return torch.nn.Sequential(
+            torch.nn.Linear(512*self.feature_size*self.feature_size , 512),
+            torch.nn.ReLU(True),
+            torch.nn.BatchNorm1d(512),
+            torch.nn.Dropout(self.dropout_base_prob+0.2),
+        )
+
+
+class MLPVariant(FeatureNetwork):
+    """
+    Standard feed-forward network with batch norm and dropout.
+    """
+    def __init__(self, features, dropout_base_prob:float, input_size:int, feature_size:int, init_weights=True):
+        """
+        Args:
+            features: feature extraction layer. (Usually an identity operation in this case.)
+            dropout_base_prob: base probability of an element to be zeroed by dropout.
+            input_size: dimensionality of input features (data).
+            feature_size: dimensionality of output features.
+            init_weights: initialize weight or not.
+        """
+
+        super(MLPVariant, self).__init__(features, dropout_base_prob)
+        self.input_size = input_size
+        self.feature_size = feature_size
+        
+        self.fc = self.build_fc()
+
+        if init_weights:
+            self._initialize_weights()
+
+    def build_fc(self):
+        return torch.nn.Sequential(
+            torch.nn.Linear(self.input_size, self.feature_size),
+            torch.nn.ReLU(True),
+            torch.nn.BatchNorm1d(self.feature_size),
+            torch.nn.Dropout(self.dropout_base_prob+0.2),
+        )
 
 
 def make_layers(cfg, dropout_base_prob:float):

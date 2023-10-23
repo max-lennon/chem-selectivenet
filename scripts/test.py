@@ -17,7 +17,7 @@ from external.dada.io import save_model
 from external.dada.io import load_model
 from external.dada.logger import Logger
 
-from selectivenet.vgg_variant import vgg16_variant
+from selectivenet.vgg_variant import vgg16_variant, MLPVariant
 from selectivenet.model import SelectiveNet
 from selectivenet.loss import SelectiveLoss
 from selectivenet.data import DatasetBuilder, ChemDatasetBuilder
@@ -33,7 +33,7 @@ from selectivenet.evaluator import Evaluator
 @click.option('-d', '--dataset', type=str, required=True)
 @click.option('--dataroot', type=str, default='../data', help='path to dataset root')
 @click.option('-j', '--num_workers', type=int, default=8)
-@click.option('-N', '--batch_size', type=int, default=128)
+@click.option('-N', '--batch_size', type=int, default=1024)
 @click.option('--ood', is_flag=True)
 @click.option('--reject_rate', type=float, default=None)
 # loss
@@ -55,17 +55,27 @@ def test(**kwargs):
     test_dataset   = dataset_builder(split='test', ood=FLAGS.ood)
     test_loader    = torch.utils.data.DataLoader(test_dataset, batch_size=FLAGS.batch_size, shuffle=False, num_workers=FLAGS.num_workers, pin_memory=True)
 
+    binary_classification = dataset_builder.num_classes == 2
+
     # model
     # features = vgg16_variant(dataset_builder.input_size, FLAGS.dropout_prob).cuda()
-    features = lambda x: x
+    identity = lambda x: x
+    features = MLPVariant(
+        features=identity, 
+        dropout_base_prob=FLAGS.dropout_prob, 
+        input_size=dataset_builder.input_size,
+        feature_size=FLAGS.dim_features,
+        ).cuda()
+    
     model = SelectiveNet(features, FLAGS.dim_features, dataset_builder.num_classes).cuda()
     load_model(model, FLAGS.weight)
 
     # if torch.cuda.device_count() > 1: model = torch.nn.DataParallel(model)
 
     # loss
-    base_loss = torch.nn.CrossEntropyLoss(reduction='none')
-    SelectiveCELoss = SelectiveLoss(base_loss, coverage=FLAGS.coverage)
+    base_loss = torch.nn.BCELoss if binary_classification else torch.nn.CrossEntropyLoss
+    SelectiveCELoss = SelectiveLoss(base_loss(reduction='none'), coverage=FLAGS.coverage)
+
    
     # pre epoch
     test_metric_dict = MetricDict()
@@ -77,17 +87,20 @@ def test(**kwargs):
             x = x.to('cuda', non_blocking=True)
             t = t.to('cuda', non_blocking=True)
 
+            if binary_classification:
+                t = t.float()
+
             # forward
             out_class, out_select, out_aux = model(x)
 
             # compute selective loss
             loss_dict = OrderedDict()
             # loss dict includes, 'empirical_risk' / 'emprical_coverage' / 'penulty'
-            selective_loss, loss_dict = SelectiveCELoss(out_class, out_select, t)
+            selective_loss, loss_dict = SelectiveCELoss(torch.squeeze(out_class), out_select, t)
             selective_loss *= FLAGS.alpha
             loss_dict['selective_loss'] = selective_loss.detach().cpu().item()
             # compute standard cross entropy loss
-            ce_loss = torch.nn.CrossEntropyLoss()(out_aux, t)
+            ce_loss = base_loss()(torch.squeeze(out_aux), t)
             ce_loss *= (1.0 - FLAGS.alpha)
             loss_dict['ce_loss'] = ce_loss.detach().cpu().item()
             # total loss

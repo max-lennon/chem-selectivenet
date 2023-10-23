@@ -16,7 +16,7 @@ from external.dada.io import print_metric_dict
 from external.dada.io import save_model
 from external.dada.logger import Logger
 
-from selectivenet.vgg_variant import vgg16_variant, VggVariant
+from selectivenet.vgg_variant import vgg16_variant, VggVariant, MLPVariant
 from selectivenet.model import SelectiveNet
 from selectivenet.loss import SelectiveLoss
 from selectivenet.data import DatasetBuilder, ChemDatasetBuilder
@@ -44,6 +44,8 @@ from selectivenet.evaluator import Evaluator
 # logging
 @click.option('-s', '--suffix', type=str, default='')
 @click.option('-l', '--log_dir', type=str, required=True)
+# hardware
+@click.option('--gpu', type=int, default=0, help="Device ID of the GPU to run on")
 
 
 def main(**kwargs):
@@ -56,21 +58,26 @@ def train(**kwargs):
     os.makedirs(FLAGS.log_dir, exist_ok=True)
     FLAGS.dump(path=os.path.join(FLAGS.log_dir, 'flags{}.json'.format(FLAGS.suffix)))
     
-    torch.cuda.set_device('cuda:1')
+    torch.cuda.set_device(f'cuda:{FLAGS.gpu}')
     # dataset
     dataset_builder = ChemDatasetBuilder(name=FLAGS.dataset, root_path=FLAGS.dataroot)
     train_dataset = dataset_builder(split='train', ood=False)
     val_dataset   = dataset_builder(split='val', ood=False)
+    test_dataset  = dataset_builder(split='test', ood=True)
     train_loader  = torch.utils.data.DataLoader(train_dataset, batch_size=FLAGS.batch_size, shuffle=True, num_workers=FLAGS.num_workers, pin_memory=True)
     val_loader    = torch.utils.data.DataLoader(val_dataset, batch_size=FLAGS.batch_size, shuffle=False, num_workers=FLAGS.num_workers, pin_memory=True)
+    test_loader  = torch.utils.data.DataLoader(test_dataset, batch_size=FLAGS.batch_size, shuffle=True, num_workers=FLAGS.num_workers, pin_memory=True)
     
+    binary_classification = dataset_builder.num_classes == 2
+
     # model
     # features = vgg16_variant(dataset_builder.input_size, FLAGS.dropout_prob).cuda()
     identity = lambda x: x
-    features = VggVariant(
+    features = MLPVariant(
         features=identity, 
         dropout_base_prob=FLAGS.dropout_prob, 
-        input_size=dataset_builder.input_size
+        input_size=dataset_builder.input_size,
+        feature_size=FLAGS.dim_features,
         ).cuda()
     
     model = SelectiveNet(features, FLAGS.dim_features, dataset_builder.num_classes).cuda()
@@ -82,8 +89,9 @@ def train(**kwargs):
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=25, gamma=0.5)
 
     # loss
-    base_loss = torch.nn.CrossEntropyLoss(reduction='none') if dataset_builder.num_classes > 2 else torch.nn.BCELoss(reduction='none')
-    SelectiveCELoss = SelectiveLoss(base_loss, coverage=FLAGS.coverage)
+    base_loss = torch.nn.BCELoss if binary_classification else torch.nn.CrossEntropyLoss
+    SelectiveCELoss = SelectiveLoss(base_loss(reduction='none'), coverage=FLAGS.coverage)
+    SelectiveOODLoss = SelectiveLoss(lambda pred, act: torch.zeros(pred.shape[0]).cuda(), coverage=FLAGS.coverage)
 
     # logger
     train_logger = Logger(path=os.path.join(FLAGS.log_dir,'train_log{}.csv'.format(FLAGS.suffix)), mode='train')
@@ -95,27 +103,36 @@ def train(**kwargs):
         val_metric_dict = MetricDict()
 
         # train
-        for i, (x,t) in enumerate(train_loader):
+        for (x,t), (o, ot) in zip(train_loader, test_loader):
             model.train()
             x = x.to('cuda', non_blocking=True)
+            o = o.to('cuda', non_blocking=True)
             t = t.to('cuda', non_blocking=True)
+
+            if binary_classification:
+                t = t.float()
 
             # forward
             out_class, out_select, out_aux = model(x)
+            
+            dummy_labels = torch.zeros_like(ot)
+            ood_select = model.selector(model.features(o))
+            ood_loss, ood_loss_dict = SelectiveOODLoss(dummy_labels, ood_select, dummy_labels)
+            ood_loss *= FLAGS.alpha
 
             # compute selective loss
             loss_dict = OrderedDict()
             # loss dict includes, 'empirical_risk' / 'emprical_coverage' / 'penulty'
-            selective_loss, loss_dict = SelectiveCELoss(out_class, out_select, t)
+            selective_loss, loss_dict = SelectiveCELoss(torch.squeeze(out_class), out_select, t)
             selective_loss *= FLAGS.alpha
             loss_dict['selective_loss'] = selective_loss.detach().cpu().item()
             # compute standard cross entropy loss
-            ce_loss = torch.nn.CrossEntropyLoss()(out_aux, t)
+            ce_loss = base_loss()(torch.squeeze(out_aux), t)
             ce_loss *= (1.0 - FLAGS.alpha)
             loss_dict['ce_loss'] = ce_loss.detach().cpu().item()
             
             # total loss
-            loss = selective_loss + ce_loss
+            loss = selective_loss + ce_loss + ood_loss
             loss_dict['loss'] = loss.detach().cpu().item()
 
             # backward
@@ -132,17 +149,20 @@ def train(**kwargs):
                 x = x.to('cuda', non_blocking=True)
                 t = t.to('cuda', non_blocking=True)
 
+                if binary_classification:
+                    t = t.float()
+
                 # forward
                 out_class, out_select, out_aux = model(x)
 
                 # compute selective loss
                 loss_dict = OrderedDict()
                 # loss dict includes, 'empirical_risk' / 'emprical_coverage' / 'penulty'
-                selective_loss, loss_dict = SelectiveCELoss(out_class, out_select, t)
+                selective_loss, loss_dict = SelectiveCELoss(torch.squeeze(out_class), out_select, t)
                 selective_loss *= FLAGS.alpha
                 loss_dict['selective_loss'] = selective_loss.detach().cpu().item()
                 # compute standard cross entropy loss
-                ce_loss = torch.nn.CrossEntropyLoss()(out_aux, t)
+                ce_loss = base_loss()(torch.squeeze(out_aux), t)
                 ce_loss *= (1.0 - FLAGS.alpha)
                 loss_dict['ce_loss'] = ce_loss.detach().cpu().item()
                 

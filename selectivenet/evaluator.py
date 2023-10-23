@@ -28,7 +28,7 @@ class Evaluator(object):
         self.t = t.detach() # (B)
         if selection_out is not None:
             if reject_rate is not None:
-                selection_threshold = torch.quantile(selection_out, reject_rate)
+                selection_threshold = torch.quantile(selection_out, reject_rate, interpolation='nearest')
             condition = (selection_out >= selection_threshold)
             self.selection_result = torch.where(condition, torch.ones_like(selection_out), torch.zeros_like(selection_out)).view(-1) # (B)
         else:
@@ -127,7 +127,7 @@ class Evaluator(object):
         Return:
             OrderedDict: accuracy, precision, recall
         """
-        assert h.size(0) == t_binary.size(0) > 0
+        assert h.size(0) == t_binary.size(0) # > 0
         assert len(h.size()) == len(t_binary.size()) == 1
 
         # conditions (true,false,positive,negative)
@@ -137,12 +137,12 @@ class Evaluator(object):
         condition_neg = (h==torch.zeros_like(h))
 
         # TP, TN, FP, FN
-        true_pos = torch.where(condition_true and condition_pos, torch.ones_like(h), torch.zeros_like(h))
-        true_neg = torch.where(condition_true and condition_neg, torch.ones_like(h), torch.zeros_like(h))
-        false_pos = torch.where(condition_false and condition_pos, torch.ones_like(h), torch.zeros_like(h))
-        false_neg = torch.where(condition_false and condition_neg, torch.ones_like(h), torch.zeros_like(h))
+        true_pos = torch.where(torch.logical_and(condition_true, condition_pos), torch.ones_like(h), torch.zeros_like(h))
+        true_neg = torch.where(torch.logical_and(condition_true, condition_neg), torch.ones_like(h), torch.zeros_like(h))
+        false_pos = torch.where(torch.logical_and(condition_false, condition_pos), torch.ones_like(h), torch.zeros_like(h))
+        false_neg = torch.where(torch.logical_and(condition_false, condition_neg), torch.ones_like(h), torch.zeros_like(h))
 
-        assert (true_pos + true_neg + false_pos + false_neg)==torch.ones_like(true_pos)
+        assert torch.all((true_pos + true_neg + false_pos + false_neg)==torch.ones_like(true_pos))
 
         tp = float(true_pos.sum())
         tn = float(true_neg.sum())
@@ -174,7 +174,7 @@ class Evaluator(object):
         h_rjc = torch.masked_select(h, r_binary.bool())
         t_rjc = torch.masked_select(t_binary, r_binary.bool())
 
-        eval_dict = self._evaluate_multi_classification(h, t)
+        eval_dict = self._evaluate_binary_classification(h_rjc, t_rjc)
         for metric in ['accuracy', 'precision', 'recall']:
             eval_dict[f'raw {metric}'] = eval_dict[metric]
             del eval_dict[metric]
@@ -182,16 +182,16 @@ class Evaluator(object):
         # conditions (true,false,positive,negative)
         condition_true  = (h_rjc==t_rjc)
         condition_false = (h_rjc!=t_rjc)
-        condition_pos = (h_rjc==torch.ones_like(h))
-        condition_neg = (h==torch.zeros_like(h))
+        condition_pos = (h_rjc==torch.ones_like(h_rjc))
+        condition_neg = (h_rjc==torch.zeros_like(h_rjc))
 
         # TP, TN, FP, FN
-        true_pos = torch.where(condition_true and condition_pos, torch.ones_like(h), torch.zeros_like(h))
-        true_neg = torch.where(condition_true and condition_neg, torch.ones_like(h), torch.zeros_like(h))
-        false_pos = torch.where(condition_false and condition_pos, torch.ones_like(h), torch.zeros_like(h))
-        false_neg = torch.where(condition_false and condition_neg, torch.ones_like(h), torch.zeros_like(h))
+        true_pos = torch.where(torch.logical_and(condition_true, condition_pos), torch.ones_like(h_rjc), torch.zeros_like(h_rjc))
+        true_neg = torch.where(torch.logical_and(condition_true, condition_neg), torch.ones_like(h_rjc), torch.zeros_like(h_rjc))
+        false_pos = torch.where(torch.logical_and(condition_false, condition_pos), torch.ones_like(h_rjc), torch.zeros_like(h_rjc))
+        false_neg = torch.where(torch.logical_and(condition_false, condition_neg), torch.ones_like(h_rjc), torch.zeros_like(h_rjc))
 
-        assert (true_pos + true_neg + false_pos + false_neg)==torch.ones_like(true_pos)
+        assert torch.all((true_pos + true_neg + false_pos + false_neg)==torch.ones_like(true_pos))
 
         tp = float(true_pos.sum())
         tn = float(true_neg.sum())
