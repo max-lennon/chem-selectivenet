@@ -1,0 +1,10 @@
+{
+    "hidden_args": {
+        "dataset": ["dataset2", "dataset3", "dataset4"]
+    },    
+    "control_args": {
+        "ex_id": "ood_selection",
+        "gpu": 0
+    },
+    "log_root": ["/home/max/Documents/Research/chem_detective/chem-selectivenet/logs/train/"]
+}
